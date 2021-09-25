@@ -87,7 +87,7 @@ public class TestSecureJarLoading {
         assertNull(cs);
     }
 
-    @Test // Contained a signed file, as well as a unsigned file.
+    @Test // Contained a signed file, as well as an unsigned file.
     void testPartial() throws Exception {
         final var path = Paths.get("src", "test", "resources", "partial.zip");
         SecureJar jar = SecureJar.from(path);

@@ -24,10 +24,19 @@ public class UnionFileSystem extends FileSystem {
     private final BiPredicate<String, String> pathFilter;
     private final Map<Path,EmbeddedFileSystemMetadata> embeddedFileSystems;
 
+    /*
+     * This is only used in debugging via {@link Jar#getPrimaryPath}
+     * Deprecated because we should not be exposing internal values.
+     */
+    @Deprecated
     public Path getPrimaryPath() {
         return basepaths.get(basepaths.size()-1);
     }
 
+    /**
+     * Deprecated for removal, it exposes internal information that consumers shouldn't know about.
+     */
+    @Deprecated(forRemoval = true)
     public BiPredicate<String, String> getFilesystemFilter() {
         return pathFilter;
     }

@@ -9,6 +9,8 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.lang.module.ModuleDescriptor;
 import java.net.URI;
+import java.nio.file.FileSystem;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.spi.FileSystemProvider;
@@ -33,9 +35,13 @@ public class Jar implements SecureJar {
     private final ManifestVerifier verifier = new ManifestVerifier();
     private final Map<String, StatusData> statusData = new HashMap<>();
     private final JarMetadata metadata;
-    private final UnionFileSystem filesystem;
+    private final FileSystem filesystem;
     private final boolean isMultiRelease;
     private final Map<Path, Integer> nameOverrides;
+    private final Path[] paths;
+    private final Path rootPath;
+    private final BiPredicate<String, String> pathfilter;
+
     private Set<String> packages;
     private List<Provider> providers;
 
@@ -49,7 +55,7 @@ public class Jar implements SecureJar {
 
     @Override
     public Path getPrimaryPath() {
-        return filesystem.getPrimaryPath();
+        return paths[paths.length - 1];
     }
 
     @Override
@@ -58,7 +64,7 @@ public class Jar implements SecureJar {
         if (this.nameOverrides.containsKey(rel)) {
             rel = this.filesystem.getPath("META-INF", "versions", this.nameOverrides.get(rel).toString()).resolve(rel);
         }
-        return Optional.of(this.filesystem.getRoot().resolve(rel)).filter(Files::exists).map(Path::toUri);
+        return Optional.of(getRootPath().resolve(rel)).filter(Files::exists).map(Path::toUri);
     }
 
     private record StatusData(String name, Status status, CodeSigner[] signers) {
@@ -69,7 +75,25 @@ public class Jar implements SecureJar {
 
     @SuppressWarnings("unchecked")
     public Jar(final Supplier<Manifest> defaultManifest, final Function<SecureJar, JarMetadata> metadataFunction, final BiPredicate<String, String> pathfilter, final Path... paths) {
-        this.filesystem = UFSP.newFileSystem(pathfilter, paths);
+        this.pathfilter = pathfilter;
+        if (pathfilter == null && paths.length == 1) {
+            // Bypass UFS because we don't do anything special
+            if (Files.isDirectory(paths[0])) {
+                this.filesystem = paths[0].getFileSystem();
+                this.rootPath = paths[0];
+            } else {
+                try {
+                    this.filesystem = FileSystems.newFileSystem(paths[0]);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+                this.rootPath = this.filesystem.getRootDirectories().iterator().next();
+            }
+        } else {
+            var fs = UFSP.newFileSystem(pathfilter, paths);
+            this.filesystem = fs;
+            this.rootPath = fs.getRoot();
+        }
         try {
             Manifest mantmp = null;
             for (int x = paths.length - 1; x >= 0; x--) { // Walk backwards because this is what cpw wanted?
@@ -109,8 +133,8 @@ public class Jar implements SecureJar {
             throw new UncheckedIOException(e);
         }
         this.isMultiRelease = Boolean.parseBoolean(getManifest().getMainAttributes().getValue("Multi-Release"));
-        if (this.isMultiRelease) {
-            var vers = filesystem.getRoot().resolve("META-INF/versions");
+        var vers = getRootPath().resolve("META-INF/versions");
+        if (this.isMultiRelease && Files.exists(vers)) {
             try (var walk = Files.walk(vers)){
                 var allnames = walk.filter(p1 ->!p1.isAbsolute())
                         .filter(path1 -> !Files.isDirectory(path1))
@@ -128,6 +152,7 @@ public class Jar implements SecureJar {
             this.nameOverrides = Map.of();
         }
         this.metadata = metadataFunction.apply(this);
+        this.paths = paths;
     }
 
     @Override
@@ -202,13 +227,13 @@ public class Jar implements SecureJar {
     @Override
     public Set<String> getPackages() {
         if (this.packages == null) {
-            try (var walk = Files.walk(this.filesystem.getRoot())) {
+            try (var walk = Files.walk(getRootPath())) {
                 this.packages = walk
+                    .filter(Files::isRegularFile)
                     .filter(path->!path.getName(0).toString().equals("META-INF"))
                     .filter(path->path.getFileName().toString().endsWith(".class"))
-                    .filter(Files::isRegularFile)
                     .map(path->path.subpath(0, path.getNameCount()-1))
-                    .map(path->path.toString().replace('/','.'))
+                    .map(path->path.toString().replace(this.filesystem.getSeparator(),"."))
                     .filter(pkg->pkg.length()!=0)
                     .collect(toSet());
             } catch (IOException e) {
@@ -221,11 +246,11 @@ public class Jar implements SecureJar {
     @Override
     public List<Provider> getProviders() {
         if (this.providers == null) {
-            final var services = this.filesystem.getRoot().resolve("META-INF/services/");
+            final var services = getRootPath().resolve("META-INF/services/");
             if (Files.exists(services)) {
                 try (var walk = Files.walk(services)) {
                     this.providers = walk.filter(path->!Files.isDirectory(path))
-                        .map((Path path1) -> Provider.fromPath(path1, filesystem.getFilesystemFilter()))
+                        .map((Path path1) -> Provider.fromPath(path1, this.pathfilter))
                         .toList();
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
@@ -244,7 +269,7 @@ public class Jar implements SecureJar {
 
     @Override
     public Path getRootPath() {
-        return filesystem.getRoot();
+        return rootPath;
     }
 
     @Override
