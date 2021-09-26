@@ -12,6 +12,7 @@ import java.util.stream.IntStream;
 public class UnionPath implements Path {
     private final UnionFileSystem fileSystem;
     private final String[] pathParts;
+    private final String toString;
     static final String ROOT = "";
 
     UnionPath(final UnionFileSystem fileSystem, boolean knownCorrectSplit, final String... pathParts) {
@@ -24,6 +25,7 @@ public class UnionPath implements Path {
             final var longstring = String.join(fileSystem.getSeparator(), pathParts);
             this.pathParts = getPathParts(longstring);
         }
+        this.toString = String.join(fileSystem.getSeparator(), this.pathParts);
     }
 
     private String[] getPathParts(final String longstring) {
@@ -207,7 +209,7 @@ public class UnionPath implements Path {
 
     @Override
     public int compareTo(final Path other) {
-        return 0;
+        return this.toString.compareTo(other.toString());
     }
 
     @Override
@@ -225,6 +227,6 @@ public class UnionPath implements Path {
 
     @Override
     public String toString() {
-        return String.join(fileSystem.getSeparator(), this.pathParts);
+        return toString;
     }
 }
